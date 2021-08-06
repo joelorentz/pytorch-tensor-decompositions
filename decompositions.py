@@ -72,7 +72,7 @@ def tucker_decomposition_conv_layer(layer):
     print(layer, "VBMF Estimated ranks", ranks)
     core, [last, first] = \
         partial_tucker(layer.weight.data, \
-            modes=[0, 1], ranks=ranks, init='svd')
+            modes=[0, 1], rank=ranks, init='svd')
 
     # A pointwise convolution that reduces the channels from S to R3
     first_layer = torch.nn.Conv2d(in_channels=first.shape[0], \
@@ -91,7 +91,8 @@ def tucker_decomposition_conv_layer(layer):
         out_channels=last.shape[0], kernel_size=1, stride=1,
         padding=0, dilation=layer.dilation, bias=True)
 
-    last_layer.bias.data = layer.bias.data
+    if layer.bias is not None:
+        last_layer.bias.data = layer.bias.data
 
     first_layer.weight.data = \
         torch.transpose(first, 1, 0).unsqueeze(-1).unsqueeze(-1)

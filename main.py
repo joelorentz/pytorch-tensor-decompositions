@@ -7,6 +7,7 @@ import torchvision
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+from torchvision.models.resnet import resnet18
 import dataset
 import argparse
 from operator import itemgetter
@@ -15,6 +16,7 @@ import tensorly as tl
 import tensorly
 from itertools import chain
 from decompositions import cp_decomposition_conv_layer, tucker_decomposition_conv_layer
+from pytorch_utils.models import initialize_model
 
 # VGG16 based network for classifying between dogs and cats.
 # After training this will be an over parameterized network,
@@ -42,9 +44,9 @@ class ModifiedVGG16Model(torch.nn.Module):
         return x
 
 class Trainer:
-    def __init__(self, train_path, test_path, model, optimizer):
-        self.train_data_loader = dataset.loader(train_path)
-        self.test_data_loader = dataset.test_loader(test_path)
+    def __init__(self, train_path, test_path, model, optimizer, batch_size=64):
+        self.train_data_loader = dataset.loader(train_path, batch_size=batch_size)
+        self.test_data_loader = dataset.test_loader(test_path, batch_size=batch_size)
 
         self.optimizer = optimizer
 
@@ -103,7 +105,8 @@ def get_args():
     parser.set_defaults(train=False)
     parser.set_defaults(decompose=False)
     parser.set_defaults(fine_tune=False)
-    parser.set_defaults(cp=False)    
+    parser.set_defaults(cp=False)
+    parser.add_argument("--batch_size", type = int, default = 64)    
     args = parser.parse_args()
     return args
 
@@ -112,9 +115,14 @@ if __name__ == '__main__':
     tl.set_backend('pytorch')
 
     if args.train:
-        model = ModifiedVGG16Model().cuda()
-        optimizer = optim.SGD(model.classifier.parameters(), lr=0.0001, momentum=0.99)
-        trainer = Trainer(args.train_path, args.test_path, model, optimizer)
+        # model = ModifiedVGG16Model().cuda()
+        # model, input_size = initialize_model("alexnet",2,use_pretrained=True)
+        model, input_size = initialize_model("resnet18",2,use_pretrained=True)
+        model = model.cuda()
+        # optimizer = optim.SGD(model.classifier.parameters(), lr=0.0001, momentum=0.99)
+        optimizer = optim.SGD(model.fc.parameters(), lr=0.0001, momentum=0.99)
+        # optimizer = optim.SGD(model.classifier.parameters(), lr=0.0001, momentum=0.99)
+        trainer = Trainer(args.train_path, args.test_path, model, optimizer, args.batch_size)
 
         trainer.train(epoches = 10)
         torch.save(model, "model")
@@ -123,20 +131,22 @@ if __name__ == '__main__':
         model = torch.load("model").cuda()
         model.eval()
         model.cpu()
-        N = len(model.features._modules.keys())
-        for i, key in enumerate(model.features._modules.keys()):
+        # N = len(model.features._modules.keys())
+        N = len(model._modules.keys())
+        for i, key in enumerate(model._modules.keys()):
 
             if i >= N - 2:
                 break
-            if isinstance(model.features._modules[key], torch.nn.modules.conv.Conv2d):
-                conv_layer = model.features._modules[key]
+            if isinstance(model._modules[key], torch.nn.modules.conv.Conv2d):
+                print(key)
+                conv_layer = model._modules[key]
                 if args.cp:
                     rank = max(conv_layer.weight.data.numpy().shape)//3
                     decomposed = cp_decomposition_conv_layer(conv_layer, rank)
                 else:
                     decomposed = tucker_decomposition_conv_layer(conv_layer)
 
-                model.features._modules[key] = decomposed
+                model._modules[key] = decomposed
 
             torch.save(model, 'decomposed_model')
 
@@ -159,11 +169,11 @@ if __name__ == '__main__':
             optimizer = optim.SGD(model.parameters(), lr=0.001)
 
 
-        trainer = Trainer(args.train_path, args.test_path, model, optimizer)
+        trainer = Trainer(args.train_path, args.test_path, model, optimizer, args.batch_size)
 
         trainer.test()
         model.cuda()
         model.train()
-        trainer.train(epoches=100)
+        trainer.train(epoches=10)
         model.eval()
         trainer.test()
