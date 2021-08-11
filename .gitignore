@@ -3,3 +3,4 @@ model
 vgg
 *.pyc
 decomposed_model
+/profiles

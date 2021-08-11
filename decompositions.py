@@ -1,17 +1,17 @@
 import tensorly as tl
-from tensorly.decomposition import parafac, partial_tucker
+from tensorly.decomposition import parafac, partial_tucker, tensor_train
 import numpy as np
 import torch
 import torch.nn as nn
 from VBMF import VBMF
 
-def cp_decomposition_conv_layer(layer, rank):
+def cp_decomposition_conv_layer(layer, rank, verbose = False):
     """ Gets a conv layer and a target rank, 
         returns a nn.Sequential object with the decomposition """
 
     # Perform CP decomposition on the layer weight tensorly. 
-    last, first, vertical, horizontal = \
-        parafac(layer.weight.data, rank=rank, init='svd')
+    _,(last, first, vertical, horizontal) = \
+        parafac(layer.weight.data, rank=rank, init='random',verbose=verbose)
 
     pointwise_s_to_r_layer = torch.nn.Conv2d(in_channels=first.shape[0], \
             out_channels=first.shape[1], kernel_size=1, stride=1, padding=0, 
@@ -33,7 +33,8 @@ def cp_decomposition_conv_layer(layer, rank):
             out_channels=last.shape[0], kernel_size=1, stride=1,
             padding=0, dilation=layer.dilation, bias=True)
 
-    pointwise_r_to_t_layer.bias.data = layer.bias.data
+    if layer.bias is not None:
+        pointwise_r_to_t_layer.bias.data = layer.bias.data
 
     depthwise_horizontal_layer.weight.data = \
         torch.transpose(horizontal, 1, 0).unsqueeze(1).unsqueeze(1)
@@ -61,7 +62,10 @@ def estimate_ranks(layer):
     ranks = [diag_0.shape[0], diag_1.shape[1]]
     return ranks
 
-def tucker_decomposition_conv_layer(layer):
+def scalar_ranks(layer,compression=0.5):
+    return [int(layer.in_channels*compression),int(layer.out_channels*compression)]
+
+def tucker_decomposition_conv_layer(layer, verbose = False):
     """ Gets a conv layer, 
         returns a nn.Sequential object with the Tucker decomposition.
         The ranks are estimated with a Python implementation of VBMF
@@ -69,10 +73,11 @@ def tucker_decomposition_conv_layer(layer):
     """
 
     ranks = estimate_ranks(layer)
+    # ranks = scalar_ranks(layer)
     print(layer, "VBMF Estimated ranks", ranks)
     core, [last, first] = \
         partial_tucker(layer.weight.data, \
-            modes=[0, 1], rank=ranks, init='svd')
+            modes=[0, 1], rank=ranks, init='svd',verbose=verbose)
 
     # A pointwise convolution that reduces the channels from S to R3
     first_layer = torch.nn.Conv2d(in_channels=first.shape[0], \
@@ -101,3 +106,49 @@ def tucker_decomposition_conv_layer(layer):
 
     new_layers = [first_layer, core_layer, last_layer]
     return nn.Sequential(*new_layers)
+
+
+def tensor_train_decomposition_conv_layer(layer, verbose = False):
+    """ Gets a conv layer, 
+        returns a nn.Sequential object with the Tensor Train decomposition.
+        
+    """
+    print(layer.weight.shape)
+    factors = tensor_train(layer.weight.data,rank=15,verbose=verbose)
+    print(factors)
+
+    tt_layers = []
+    for f in factors:
+        print(f.shape)
+    
+        # tt_layers.append( torch.nn.Conv2d(in_channels=f.shape[0], \
+        #     out_channels=f.shape[1], kernel_size=1,
+        #     stride=1, padding=0, dilation=layer.dilation, bias=False))
+
+    # # A pointwise convolution that reduces the channels from S to R3
+    # first_layer = torch.nn.Conv2d(in_channels=first.shape[0], \
+    #         out_channels=first.shape[1], kernel_size=1,
+    #         stride=1, padding=0, dilation=layer.dilation, bias=False)
+
+    # # A regular 2D convolution layer with R3 input channels 
+    # # and R3 output channels
+    # core_layer = torch.nn.Conv2d(in_channels=core.shape[1], \
+    #         out_channels=core.shape[0], kernel_size=layer.kernel_size,
+    #         stride=layer.stride, padding=layer.padding, dilation=layer.dilation,
+    #         bias=False)
+
+    # # A pointwise convolution that increases the channels from R4 to T
+    # last_layer = torch.nn.Conv2d(in_channels=last.shape[1], \
+    #     out_channels=last.shape[0], kernel_size=1, stride=1,
+    #     padding=0, dilation=layer.dilation, bias=True)
+
+    # if layer.bias is not None:
+    #     last_layer.bias.data = layer.bias.data
+
+    # first_layer.weight.data = \
+    #     torch.transpose(first, 1, 0).unsqueeze(-1).unsqueeze(-1)
+    # last_layer.weight.data = last.unsqueeze(-1).unsqueeze(-1)
+    # core_layer.weight.data = core
+
+    # new_layers = [first_layer, core_layer, last_layer]
+    # return nn.Sequential(*new_layers)
