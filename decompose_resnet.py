@@ -1,5 +1,6 @@
 import torch
 from torch._C import ThroughputBenchmark
+from torch.autograd.grad_mode import no_grad
 from torchvision import models
 import sys, os
 import numpy as np
@@ -78,6 +79,8 @@ def get_args():
     parser.add_argument("--decompose", dest="decompose", action="store_true")
     parser.add_argument("--fine_tune", dest="fine_tune", action="store_true")
     parser.add_argument("--profile", dest="profile", action="store_true")
+    parser.add_argument("--flops", dest="flops", action="store_true")
+    parser.add_argument("--fw", dest="fw", action="store_true")
     parser.add_argument("--snap",type=str,default="")
     parser.add_argument("--all_layers", dest="all_layers", action="store_true")
     parser.add_argument("--train_path", type = str, default = "train")
@@ -229,8 +232,15 @@ if __name__ == '__main__':
         
         
         input = torch.randn(args.batch_size,3,224,224).cuda()
-        criterion = torch.nn.CrossEntropyLoss()
-        target = torch.empty(args.batch_size, dtype=torch.long).random_(2).cuda()
+        
+        if args.fw:
+            worker_name = "fw_" + name+"_"+str(time.time())
+            model.eval()
+        else:
+            criterion = torch.nn.CrossEntropyLoss()
+            target = torch.empty(args.batch_size, dtype=torch.long).random_(2).cuda()
+            worker_name = name+"_"+str(time.time())
+            model.train()
 
         with torch.profiler.profile(
             activities=[
@@ -239,55 +249,55 @@ if __name__ == '__main__':
             ],
             schedule=torch.profiler.schedule(
                 wait=0,
-                warmup=5,
+                warmup=10,
                 active=10),
             # used when outputting for tensorboard
             on_trace_ready=torch.profiler.tensorboard_trace_handler(
                 dir_name=os.path.join(".","profiles",name),
-                worker_name=name+"_"+str(time.time())
+                worker_name=worker_name
             ),
             # on_trace_ready=trace_handler,
             record_shapes=True,
-            # profile_memory=True,
+            profile_memory=True,
             with_flops=True
     
             ) as p:
-                for iter in range(15):
-                    print("Profiling step %s of 15"%str(iter+1))
-                    output = model(input)
-                    loss = criterion(output,target)
-                    loss.backward()
-                    # send a signal to the profiler that the next iteration has started
-                    p.step()
+                if args.fw:
+                    with torch.no_grad():
+                        for iter in range(20):
+                            print("Profiling step %s of 20"%str(iter+1))
+                            output = model(input)
+                            # send a signal to the profiler that the next iteration has started
+                            p.step()
+                else:
+                     for iter in range(20):
+                            print("Profiling step %s of 20"%str(iter+1))
+                            output = model(input)
+                            loss = criterion(output,target)
+                            loss.backward()
+                            # send a signal to the profiler that the next iteration has started
+                            p.step()
         
-        model.zero_grad()
-        # only forward
-        name = "fw_" + name
-        with torch.profiler.profile(
-            activities=[
-                torch.profiler.ProfilerActivity.CPU,
-                torch.profiler.ProfilerActivity.CUDA,
-            ],
-            schedule=torch.profiler.schedule(
-                wait=0,
-                warmup=5,
-                active=10),
-            # used when outputting for tensorboard
-            on_trace_ready=torch.profiler.tensorboard_trace_handler(
-                dir_name=os.path.join(".","profiles",name),
-                worker_name=name+"_"+str(time.time())
-            ),
-            # on_trace_ready=trace_handler,
-            record_shapes=True,
-            # profile_memory=True,
-            with_flops=True
-    
-            ) as p:
-                for iter in range(15):
-                    print("Profiling step %s of 15"%str(iter+1))
-                    output = model(input)
-                    # send a signal to the profiler that the next iteration has started
-                    p.step()
-            
+        
         # computer flops
+        print(pthflops(model,input))
+    
+    elif args.flops:
+        name = str(args.batch_size)
+        if args.snap == "":
+            model, input_size = initialize_model("resnet18",2,use_pretrained=True)
+            model.cuda()
+            name = name + "_baseline"
+        # profile snapshot (compressed model)
+        else:
+            model = torch.load(args.snap).cuda()
+            name = name + "_" + args.snap
+        
+        
+        
+        input = torch.randn(args.batch_size,3,224,224).cuda()
+        criterion = torch.nn.CrossEntropyLoss()
+        target = torch.empty(args.batch_size, dtype=torch.long).random_(2).cuda()
+
+         # computer flops
         print(pthflops(model,input))
