@@ -147,12 +147,12 @@ def pthflops(model,input):
 if __name__ == '__main__':
     args = get_args()
     tl.set_backend('pytorch')
-
     if args.train:
         # model = ModifiedVGG16Model().cuda()
         # model, input_size = initialize_model("alexnet",2,use_pretrained=True)
         model, input_size = initialize_model("resnet18",2,use_pretrained=True)
         model = model.cuda()
+        print("model loaded")
         # optimizer = optim.SGD(model.classifier.parameters(), lr=0.0001, momentum=0.99)
         optimizer = optim.SGD(model.fc.parameters(), lr=0.0001, momentum=0.99)
         # optimizer = optim.SGD(model.classifier.parameters(), lr=0.0001, momentum=0.99)
